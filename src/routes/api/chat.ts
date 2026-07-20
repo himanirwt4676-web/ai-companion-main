@@ -12,7 +12,7 @@ type Body = {
   maxTokens?: number;
 };
 
-const DEFAULT_MODEL = "google/gemini-3-flash-preview";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const SYSTEM_PROMPT =
   "You are Smart Chatbot AI, a helpful, concise, and friendly assistant. Format answers with Markdown. Use fenced code blocks with language hints for code.";
 
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/api/chat")({
         const provider = getAiProvider();
         if (!provider) {
           return new Response(
-            "AI API Key missing! Please add LOVABLE_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY to your .env file.",
+            "AI API Key missing! Please add GEMINI_API_KEY, LOVABLE_API_KEY, or OPENAI_API_KEY to your .env file.",
             { status: 500 }
           );
         }
@@ -87,7 +87,18 @@ export const Route = createFileRoute("/api/chat")({
           .eq("chat_id", body.chatId)
           .order("created_at", { ascending: true });
 
-        const modelName = body.model || DEFAULT_MODEL;
+        let modelName = body.model || DEFAULT_MODEL;
+
+        // Clean up model names for Google AI Studio
+        if (process.env.GEMINI_API_KEY) {
+          if (modelName.startsWith("google/")) {
+            modelName = modelName.replace("google/", "");
+          }
+          if (modelName.includes("gemini-3") || modelName === "gemini-3-flash-preview") {
+            modelName = "gemini-2.5-flash";
+          }
+        }
+
         const model = provider(modelName);
 
         const messages = [
