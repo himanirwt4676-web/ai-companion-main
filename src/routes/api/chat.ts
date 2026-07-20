@@ -200,40 +200,25 @@ export const Route = createFileRoute("/api/chat")({
             content: m.content,
           }));
 
-        // Build multimodal content parts for Gemini 2.5 Flash (Images + Direct PDF Inline Data + Text)
-        const contentParts: any[] = [
-          { type: "text", text: combinedUserText || "Please analyze the attached document(s) / image(s)." },
-        ];
+        // Build multimodal content parts for Gemini (Images + Text)
+        const imageAttachments = (body.attachments || []).filter((a) => a.type === "image" && a.data);
 
-        for (const att of body.attachments || []) {
-          if (att.type === "image" && att.data) {
-            contentParts.push({
+        let latestUserContent: any = combinedUserText;
+        if (imageAttachments.length > 0) {
+          latestUserContent = [
+            { type: "text", text: combinedUserText || "Please analyze the attached image(s)." },
+            ...imageAttachments.map((img) => ({
               type: "image",
-              image: att.data,
-            });
-          } else if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
-            // Send inline PDF data part to Gemini Vision / Document Intelligence engine
-            try {
-              contentParts.push({
-                type: "file",
-                data: att.data,
-                mimeType: "application/pdf",
-              });
-            } catch (fileErr) {
-              // Fallback to image type if file part unsupported
-              contentParts.push({
-                type: "image",
-                image: att.data,
-              });
-            }
-          }
+              image: img.data,
+            })),
+          ];
         }
 
         const messages = [
           ...historyMessages,
           {
             role: "user" as const,
-            content: contentParts.length === 1 ? combinedUserText : contentParts,
+            content: latestUserContent,
           },
         ];
 
