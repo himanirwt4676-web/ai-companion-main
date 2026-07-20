@@ -127,7 +127,7 @@ export const Route = createFileRoute("/api/chat")({
 
         if (!chat) return new Response("Chat not found", { status: 404 });
 
-        // Process PDF attachments page-by-page using unpdf (for text extraction & page structuring)
+        // Process PDF attachments page-by-page using unpdf
         let extractedPdfText = "";
         for (const att of body.attachments || []) {
           if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
@@ -156,7 +156,7 @@ export const Route = createFileRoute("/api/chat")({
           }
         }
 
-        // Combine prompt text cleanly for DB storage and history
+        // Combine prompt text cleanly
         const combinedUserText = (body.content + extractedPdfText).trim();
 
         // Insert user message
@@ -181,15 +181,6 @@ export const Route = createFileRoute("/api/chat")({
           .select("role, content")
           .eq("chat_id", body.chatId)
           .order("created_at", { ascending: true });
-
-        let modelName = body.model || DEFAULT_MODEL;
-
-        const geminiApiKey = getEnvVar("GEMINI_API_KEY") || getEnvVar("VITE_GEMINI_API_KEY");
-        if (geminiApiKey) {
-          modelName = "gemini-2.5-flash";
-        }
-
-        const model = provider(modelName);
 
         // Build history messages
         const historyMessages = (history ?? [])
@@ -258,34 +249,55 @@ REAL-TIME CONTEXT DATA:
 MANDATORY INSTRUCTIONS:
 1. CREATOR CREDITS: Whenever asked about your owner, creator, or developer, state proudly that you were created and developed by Subham.
 2. UNIVERSAL PDF & IMAGE ANALYSIS: You can study, read, and explain ANY PDF (text-based PDFs, scanned PDFs, hand-written documents, forms, research papers, contracts, invoices) and ANY Image (diagrams, screenshots, photos, charts). Analyze the document/image thoroughly and answer any questions asked by the user.
-3. PAGE-BY-PAGE ACCURACY: When a multi-page PDF is attached, text is provided with page markers ('--- Page 1 ---', '--- Page 2 ---', etc.) alongside inline PDF document data. When the user asks about specific pages (e.g. "explain page 1", "what is on page 2", "summarize page 3"), answer accurately for that specific page.
+3. PAGE-BY-PAGE ACCURACY: When a multi-page PDF is attached, text is provided with page markers ('--- Page 1 ---', '--- Page 2 ---', etc.). When the user asks about specific pages (e.g. "explain page 1", "what is on page 2", "summarize page 3"), answer accurately for that specific page.
 4. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Give exact answers for date/time/location queries.
 5. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
 6. FORMATTING: Use clean, beautiful Markdown formatting, bold headings, bullet points, and syntax-highlighted code blocks.`;
 
-        const result = streamText({
-          model,
-          system: systemPrompt,
-          messages,
-          temperature: body.temperature ?? 0.7,
-          maxOutputTokens: body.maxTokens ?? 2048,
-        });
+        // Model Fallback Pipeline (gemini-2.5-flash -> gemini-2.0-flash -> gemini-2.5-pro)
+        const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"];
+        let resultStream: any = null;
+        let lastErrorMsg = "";
 
-        // Tee stream: send to client + accumulate to persist assistant message
+        for (const mName of GEMINI_MODELS) {
+          try {
+            const targetModel = provider(mName);
+            resultStream = streamText({
+              model: targetModel,
+              system: systemPrompt,
+              messages,
+              temperature: body.temperature ?? 0.7,
+              maxOutputTokens: body.maxTokens ?? 2048,
+            });
+            // Test if stream initializes without immediate throw
+            break;
+          } catch (err) {
+            lastErrorMsg = err instanceof Error ? err.message : String(err);
+            console.warn(`[Model Fallback Warning]: ${mName} failed:`, lastErrorMsg);
+          }
+        }
+
+        // Stream response to client
         let assistantText = "";
         const encoder = new TextEncoder();
+
         const stream = new ReadableStream({
           async start(controller) {
             try {
-              for await (const delta of result.textStream) {
-                assistantText += delta;
-                controller.enqueue(encoder.encode(delta));
+              if (resultStream) {
+                for await (const delta of resultStream.textStream) {
+                  assistantText += delta;
+                  controller.enqueue(encoder.encode(delta));
+                }
+              } else {
+                assistantText = `⚠️ **Google AI Studio Rate Limit Reached (429 Too Many Requests)**\n\nYour API key has temporarily reached its Google Free Tier quota. Please wait ~30 seconds or add a fresh \`GEMINI_API_KEY\` in your \`.env\` file.`;
+                controller.enqueue(encoder.encode(assistantText));
               }
               controller.close();
             } catch (err) {
-              const message = err instanceof Error ? err.message : "Model error";
-              console.error("[Chat API Error]:", message);
-              assistantText = `[Error generating response: ${message}]`;
+              const message = err instanceof Error ? err.message : "API Error";
+              console.error("[Stream Error]:", message);
+              assistantText = `⚠️ **Google AI Studio Quota Limit**: ${message}\n\nPlease wait a few seconds or check your GEMINI_API_KEY in \`.env\`.`;
               controller.enqueue(encoder.encode(assistantText));
               controller.close();
             } finally {
