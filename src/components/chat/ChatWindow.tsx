@@ -43,12 +43,13 @@ export function ChatWindow({ chatId }: Props) {
     if (files.length === 0) return;
 
     for (const file of files) {
-      if (file.size > 10 * 1024 * 1024) {
-        toast.error(`File ${file.name} is too large (max 10MB)`);
+      if (file.size > 15 * 1024 * 1024) {
+        toast.error(`File ${file.name} is too large (max 15MB)`);
         continue;
       }
 
       const isImage = file.type.startsWith("image/");
+      const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type.includes("pdf");
       const reader = new FileReader();
 
       reader.onload = (event) => {
@@ -64,10 +65,11 @@ export function ChatWindow({ chatId }: Props) {
         setAttachments((prev) => [...prev, newAttachment]);
       };
 
-      if (isImage) {
+      if (isImage || isPdf) {
+        // Read images and PDFs as Data URLs (base64) so binary data is not corrupted as raw text
         reader.readAsDataURL(file);
       } else {
-        // Read text/code/document files as text
+        // Read text/code files as text
         reader.readAsText(file);
       }
     }
@@ -87,11 +89,17 @@ export function ChatWindow({ chatId }: Props) {
     setStreaming(true);
     setAssistantDraft("");
 
-    // Build message text with file metadata if present
+    // Build user message preview text cleanly (no raw binary streams!)
     let fullContent = content.trim();
     if (currentAttachments.length > 0) {
       const fileSummaries = currentAttachments
-        .map((a) => (a.type === "image" ? `![${a.name}]` : `\n\n--- Attachment: ${a.name} ---\n${a.data.slice(0, 3000)}\n--- End Attachment ---`))
+        .map((a) => {
+          if (a.type === "image") return `![${a.name}]`;
+          if (a.name.toLowerCase().endsWith(".pdf") || a.mimeType.includes("pdf")) {
+            return `📎 [Attached PDF Document: ${a.name}]`;
+          }
+          return `\n\n--- Attachment: ${a.name} ---\n${a.data.slice(0, 3000)}\n--- End Attachment ---`;
+        })
         .join("\n");
       fullContent = fullContent ? `${fullContent}\n${fileSummaries}` : fileSummaries;
     }
@@ -200,7 +208,7 @@ export function ChatWindow({ chatId }: Props) {
             </div>
             <h2 className="text-2xl font-semibold tracking-tight">How can I help you today?</h2>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Ask questions, upload images for analysis, attach code or documents, brainstorm, and more.
+              Ask questions, upload images or PDFs for analysis, attach code or documents, brainstorm, and more.
             </p>
           </div>
         ) : (
@@ -237,7 +245,9 @@ export function ChatWindow({ chatId }: Props) {
                   )}
                   <div className="min-w-0 max-w-[120px]">
                     <p className="truncate font-medium">{att.name}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase">{att.type}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">
+                      {att.name.toLowerCase().endsWith(".pdf") ? "PDF Document" : att.type}
+                    </p>
                   </div>
                   <button
                     onClick={() => removeAttachment(att.id)}
@@ -256,7 +266,7 @@ export function ChatWindow({ chatId }: Props) {
               ref={fileInputRef}
               onChange={handleFileSelect}
               multiple
-              accept="image/*,.txt,.md,.json,.csv,.js,.ts,.tsx,.py,.pdf"
+              accept="image/*,.pdf,.txt,.md,.json,.csv,.js,.ts,.tsx,.py"
               className="hidden"
             />
             <Button
@@ -265,7 +275,7 @@ export function ChatWindow({ chatId }: Props) {
               variant="ghost"
               onClick={() => fileInputRef.current?.click()}
               className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-foreground"
-              title="Attach image or file"
+              title="Attach image or PDF file"
             >
               <Paperclip className="h-4 w-4" />
             </Button>
@@ -274,7 +284,7 @@ export function ChatWindow({ chatId }: Props) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Message Smart Chatbot AI… (Attach images or files)"
+              placeholder="Message Smart Chatbot AI… (Attach PDFs or images)"
               rows={1}
               className="max-h-52 min-h-[40px] flex-1 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0"
             />
