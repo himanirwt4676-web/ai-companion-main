@@ -12,11 +12,47 @@ type Body = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  language?: string;
+  country?: string;
 };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const SYSTEM_PROMPT =
-  "You are Smart Chatbot AI, a helpful, concise, and friendly assistant. Format answers with Markdown. Use fenced code blocks with language hints for code.";
+
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English",
+  es: "Spanish (Español)",
+  hi: "Hindi (हिन्दी)",
+  fr: "French (Français)",
+  de: "German (Deutsch)",
+  ja: "Japanese (日本語)",
+  zh: "Chinese (中文)",
+  pt: "Portuguese (Português)",
+  ar: "Arabic (العربية)",
+  ru: "Russian (Русский)",
+  it: "Italian (Italiano)",
+  ko: "Korean (한국어)",
+};
+
+const COUNTRY_NAMES: Record<string, string> = {
+  US: "United States",
+  IN: "India",
+  GB: "United Kingdom",
+  CA: "Canada",
+  AU: "Australia",
+  DE: "Germany",
+  FR: "France",
+  JP: "Japan",
+  CN: "China",
+  BR: "Brazil",
+  AE: "United Arab Emirates",
+  SA: "Saudi Arabia",
+  MX: "Mexico",
+  IT: "Italy",
+  ES: "Spain",
+  SG: "Singapore",
+  ZA: "South Africa",
+  KR: "South Korea",
+};
 
 function getEnvVar(name: string): string | undefined {
   if (process.env[name]) return process.env[name];
@@ -122,9 +158,43 @@ export const Route = createFileRoute("/api/chat")({
             content: m.content,
           }));
 
+        // Dynamic Real-time Date/Time & Multilingual Prompt Context
+        const now = new Date();
+        const formattedDate = now.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+        const formattedTime = now.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          timeZoneName: "short",
+        });
+
+        const userLangCode = body.language || "en";
+        const userLangName = LANGUAGE_NAMES[userLangCode] || "English";
+        const userCountryCode = body.country || "US";
+        const userCountryName = COUNTRY_NAMES[userCountryCode] || userCountryCode;
+
+        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion.
+
+REAL-TIME CONTEXT DATA:
+- Current Date: ${formattedDate} (${now.toISOString().split("T")[0]})
+- Current Time: ${formattedTime}
+- System Timestamp: ${now.toISOString()}
+- User Location / Country Context: ${userCountryName} (${userCountryCode})
+- Preferred Language: ${userLangName} (${userLangCode})
+
+MANDATORY INSTRUCTIONS:
+1. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
+2. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
+3. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;
+
         const result = streamText({
           model,
-          system: SYSTEM_PROMPT,
+          system: systemPrompt,
           messages,
           temperature: body.temperature ?? 0.7,
           maxOutputTokens: body.maxTokens ?? 2048,

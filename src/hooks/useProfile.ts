@@ -6,6 +6,8 @@ export type ChatSettings = {
   model: string;
   temperature: number;
   max_tokens: number;
+  language: string;
+  country: string;
 };
 
 export type Profile = {
@@ -15,11 +17,13 @@ export type Profile = {
   settings: ChatSettings;
 };
 
-const DEFAULT_SETTINGS: ChatSettings = {
+export const DEFAULT_SETTINGS: ChatSettings = {
   theme: "dark",
   model: "google/gemini-3-flash-preview",
   temperature: 0.7,
   max_tokens: 2048,
+  language: "en",
+  country: "US",
 };
 
 export function useProfile() {

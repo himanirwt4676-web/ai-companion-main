@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { Plus, MessageSquare, Search, Trash2, Pencil, Settings, User, LogOut, Sparkles } from "lucide-react";
+import { Plus, MessageSquare, Search, Trash2, Pencil, Settings, User, LogOut, Sparkles, Globe, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { useChats, useCreateChat, useDeleteChat, useRenameChat } from "@/hooks/useChats";
 import { useProfile } from "@/hooks/useProfile";
+import { LANGUAGES, COUNTRIES } from "@/routes/_authenticated/settings";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,9 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const filtered = chats.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
+
+  const currentLang = LANGUAGES.find((l) => l.code === (profile?.settings.language || "en")) || LANGUAGES[0];
+  const currentCountry = COUNTRIES.find((c) => c.code === (profile?.settings.country || "US")) || COUNTRIES[0];
 
   const newChat = async () => {
     const chat = await createChat.mutateAsync();
@@ -157,6 +161,18 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
             })}
           </ul>
         )}
+      </div>
+
+      {/* Quick Language & Country Context Badge */}
+      <div className="px-3 py-2 border-t border-sidebar-border bg-sidebar-accent/30 text-xs text-muted-foreground flex items-center justify-between">
+        <Link to="/settings" className="flex items-center gap-1.5 hover:text-foreground">
+          <span>{currentLang.flag} {currentLang.label.split(" ")[0]}</span>
+          <span>•</span>
+          <span>{currentCountry.flag} {currentCountry.code}</span>
+        </Link>
+        <Link to="/settings" className="hover:text-foreground">
+          <Settings className="h-3.5 w-3.5" />
+        </Link>
       </div>
 
       <div className="border-t border-sidebar-border p-2">

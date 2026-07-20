@@ -66,6 +66,8 @@ export function ChatWindow({ chatId }: Props) {
           model: profile?.settings.model,
           temperature: profile?.settings.temperature,
           maxTokens: profile?.settings.max_tokens,
+          language: profile?.settings.language,
+          country: profile?.settings.country,
         }),
       });
 
