@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import { streamText } from "ai";
 import type { Database } from "@/integrations/supabase/types";
-import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
+import { getAiProvider } from "@/lib/ai-gateway.server";
 
 type Body = {
   chatId: string;
@@ -20,28 +20,39 @@ export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const apiKey = process.env.LOVABLE_API_KEY;
         const supabaseUrl = process.env.SUPABASE_URL;
         const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY;
-        if (!apiKey || !supabaseUrl || !supabaseKey) {
-          return new Response("Server not configured", { status: 500 });
+
+        if (!supabaseUrl || !supabaseKey) {
+          return new Response("Supabase not configured in .env file (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY missing)", {
+            status: 500,
+          });
+        }
+
+        const provider = getAiProvider();
+        if (!provider) {
+          return new Response(
+            "AI API Key missing! Please add LOVABLE_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY to your .env file.",
+            { status: 500 }
+          );
         }
 
         const auth = request.headers.get("authorization") ?? "";
         const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-        if (!token) return new Response("Unauthorized", { status: 401 });
+        if (!token) return new Response("Unauthorized - Please sign in", { status: 401 });
 
         const supabase = createClient<Database>(supabaseUrl, supabaseKey, {
           global: { headers: { Authorization: `Bearer ${token}` } },
           auth: { persistSession: false, autoRefreshToken: false },
         });
+
         const { data: userData, error: userErr } = await supabase.auth.getUser(token);
-        if (userErr || !userData.user) return new Response("Unauthorized", { status: 401 });
+        if (userErr || !userData.user) return new Response("Unauthorized user", { status: 401 });
         const userId = userData.user.id;
 
         const body = (await request.json()) as Body;
         if (!body?.chatId || !body?.content?.trim()) {
-          return new Response("Bad request", { status: 400 });
+          return new Response("Bad request - chatId and content required", { status: 400 });
         }
 
         // Verify chat ownership
@@ -50,6 +61,7 @@ export const Route = createFileRoute("/api/chat")({
           .select("id, title")
           .eq("id", body.chatId)
           .maybeSingle();
+
         if (!chat) return new Response("Chat not found", { status: 404 });
 
         // Insert user message
@@ -75,8 +87,8 @@ export const Route = createFileRoute("/api/chat")({
           .eq("chat_id", body.chatId)
           .order("created_at", { ascending: true });
 
-        const gateway = createLovableAiGatewayProvider(apiKey);
-        const model = gateway(body.model || DEFAULT_MODEL);
+        const modelName = body.model || DEFAULT_MODEL;
+        const model = provider(modelName);
 
         const messages = [
           { role: "system" as const, content: SYSTEM_PROMPT },
