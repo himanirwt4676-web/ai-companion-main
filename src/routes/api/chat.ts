@@ -12,7 +12,7 @@ type Body = {
   maxTokens?: number;
 };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-1.5-flash";
 const SYSTEM_PROMPT =
   "You are Smart Chatbot AI, a helpful, concise, and friendly assistant. Format answers with Markdown. Use fenced code blocks with language hints for code.";
 
@@ -20,8 +20,8 @@ export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+        const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
         if (!supabaseUrl || !supabaseKey) {
           return new Response("Supabase not configured in .env file (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY missing)", {
@@ -89,28 +89,28 @@ export const Route = createFileRoute("/api/chat")({
 
         let modelName = body.model || DEFAULT_MODEL;
 
-        // Clean up model names for Google AI Studio
-        if (process.env.GEMINI_API_KEY) {
+        const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+        if (geminiApiKey) {
           if (modelName.startsWith("google/")) {
             modelName = modelName.replace("google/", "");
           }
-          if (modelName.includes("gemini-3") || modelName === "gemini-3-flash-preview") {
-            modelName = "gemini-2.5-flash";
+          if (modelName.includes("gemini-3") || modelName.includes("gemini-2.5") || modelName === "gemini-3-flash-preview") {
+            modelName = "gemini-1.5-flash";
           }
         }
 
         const model = provider(modelName);
 
-        const messages = [
-          { role: "system" as const, content: SYSTEM_PROMPT },
-          ...(history ?? []).map((m) => ({
-            role: m.role as "user" | "assistant" | "system",
+        const messages = (history ?? [])
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
             content: m.content,
-          })),
-        ];
+          }));
 
         const result = streamText({
           model,
+          system: SYSTEM_PROMPT,
           messages,
           temperature: body.temperature ?? 0.7,
           maxOutputTokens: body.maxTokens ?? 2048,

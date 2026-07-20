@@ -1,10 +1,10 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 export function getAiProvider() {
-  const lovableApiKey = process.env.LOVABLE_API_KEY;
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  const openAiApiKey = process.env.OPENAI_API_KEY;
-  const groqApiKey = process.env.GROQ_API_KEY;
+  const lovableApiKey = process.env.LOVABLE_API_KEY || process.env.VITE_LOVABLE_API_KEY;
+  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const openAiApiKey = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
+  const groqApiKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
 
   if (lovableApiKey) {
     return createOpenAICompatible({
