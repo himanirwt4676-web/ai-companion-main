@@ -6,6 +6,13 @@ import { getAiProvider } from "@/lib/ai-gateway.server";
 import fs from "fs";
 import path from "path";
 
+type AttachmentInput = {
+  name: string;
+  type: "image" | "file";
+  mimeType: string;
+  data: string;
+};
+
 type Body = {
   chatId: string;
   content: string;
@@ -14,6 +21,7 @@ type Body = {
   maxTokens?: number;
   language?: string;
   country?: string;
+  attachments?: AttachmentInput[];
 };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -106,8 +114,8 @@ export const Route = createFileRoute("/api/chat")({
         const userId = userData.user.id;
 
         const body = (await request.json()) as Body;
-        if (!body?.chatId || !body?.content?.trim()) {
-          return new Response("Bad request - chatId and content required", { status: 400 });
+        if (!body?.chatId || (!body?.content?.trim() && (!body?.attachments || body.attachments.length === 0))) {
+          return new Response("Bad request - chatId and content or attachments required", { status: 400 });
         }
 
         // Verify chat ownership
@@ -129,7 +137,7 @@ export const Route = createFileRoute("/api/chat")({
 
         // If chat title still default, set from first user message
         if (chat.title === "New chat") {
-          const title = body.content.trim().slice(0, 60);
+          const title = (body.content || "Attached files").trim().slice(0, 60);
           await supabase.from("chats").update({ title }).eq("id", body.chatId);
         } else {
           await supabase.from("chats").update({ updated_at: new Date().toISOString() }).eq("id", body.chatId);
@@ -151,12 +159,36 @@ export const Route = createFileRoute("/api/chat")({
 
         const model = provider(modelName);
 
-        const messages = (history ?? [])
+        // Build history messages
+        const historyMessages = (history ?? [])
+          .slice(0, -1) // Exclude the newly inserted last message so we can format it with attachments below
           .filter((m) => m.role === "user" || m.role === "assistant")
           .map((m) => ({
             role: m.role as "user" | "assistant",
             content: m.content,
           }));
+
+        // Format the latest user message with multimodal content parts for Gemini Vision / files
+        const imageAttachments = (body.attachments || []).filter((a) => a.type === "image" && a.data);
+
+        let latestUserContent: any = body.content || "";
+        if (imageAttachments.length > 0) {
+          latestUserContent = [
+            { type: "text", text: body.content || "Please analyze the attached image(s)." },
+            ...imageAttachments.map((img) => ({
+              type: "image",
+              image: img.data,
+            })),
+          ];
+        }
+
+        const messages = [
+          ...historyMessages,
+          {
+            role: "user" as const,
+            content: latestUserContent,
+          },
+        ];
 
         // Dynamic Real-time Date/Time & Multilingual Prompt Context
         const now = new Date();
@@ -178,7 +210,7 @@ export const Route = createFileRoute("/api/chat")({
         const userCountryCode = body.country || "US";
         const userCountryName = COUNTRY_NAMES[userCountryCode] || userCountryCode;
 
-        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion.
+        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with multimodal image and document analysis capabilities.
 
 REAL-TIME CONTEXT DATA:
 - Current Date: ${formattedDate} (${now.toISOString().split("T")[0]})
@@ -188,9 +220,10 @@ REAL-TIME CONTEXT DATA:
 - Preferred Language: ${userLangName} (${userLangCode})
 
 MANDATORY INSTRUCTIONS:
-1. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
-2. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
-3. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;
+1. MULTIMODAL VISION & FILE ANALYSIS: You can analyze attached images, screenshots, code snippets, and text documents thoroughly. When an image or document is attached, analyze it carefully and answer the user's questions about it.
+2. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
+3. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
+4. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;
 
         const result = streamText({
           model,

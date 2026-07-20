@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT,
   avatar_url TEXT,
-  settings JSONB NOT NULL DEFAULT '{"theme":"dark","model":"google/gemini-3-flash-preview","temperature":0.7,"max_tokens":2048}'::jsonb,
+  settings JSONB NOT NULL DEFAULT '{"theme":"dark","model":"google/gemini-3-flash-preview","temperature":0.7,"max_tokens":2048,"language":"en","country":"US"}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -28,16 +28,20 @@ DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
 CREATE POLICY "profiles_update_own" ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
 
--- 2. CHATS TABLE
+-- 2. CHATS TABLE (with 30-day Recycle Bin soft delete support)
 CREATE TABLE IF NOT EXISTS public.chats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT 'New chat',
+  deleted_at TIMESTAMPTZ DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.chats ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
+
 CREATE INDEX IF NOT EXISTS chats_user_updated_idx ON public.chats(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS chats_user_deleted_idx ON public.chats(user_id, deleted_at);
 
 -- Permissions & RLS for CHATS
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.chats TO authenticated;
@@ -108,7 +112,6 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created 
   AFTER INSERT ON auth.users 
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
 
 -- Security best practice: revoke public execution on trigger functions
 REVOKE EXECUTE ON FUNCTION public.set_updated_at() FROM PUBLIC, anon, authenticated;

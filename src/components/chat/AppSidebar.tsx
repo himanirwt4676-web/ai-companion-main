@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { Plus, MessageSquare, Search, Trash2, Pencil, Settings, User, LogOut, Sparkles, Globe, MapPin } from "lucide-react";
+import { Plus, MessageSquare, Search, Trash2, Pencil, Settings, User, LogOut, Sparkles, RefreshCw, Archive } from "lucide-react";
 import { toast } from "sonner";
-import { useChats, useCreateChat, useDeleteChat, useRenameChat } from "@/hooks/useChats";
+import { useChats, useCreateChat, useSoftDeleteChat, useRestoreChat, usePermanentDeleteChat, useRenameChat, useRecycleBin } from "@/hooks/useChats";
 import { useProfile } from "@/hooks/useProfile";
 import { LANGUAGES, COUNTRIES } from "@/routes/_authenticated/settings";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -26,20 +27,31 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
   const params = useParams({ strict: false }) as { chatId?: string };
   const { data: chats = [] } = useChats();
+  const { data: recycledChats = [] } = useRecycleBin();
   const { data: profile } = useProfile();
   const createChat = useCreateChat();
-  const deleteChat = useDeleteChat();
+  const softDeleteChat = useSoftDeleteChat();
+  const restoreChat = useRestoreChat();
+  const permanentDeleteChat = usePermanentDeleteChat();
   const renameChat = useRenameChat();
 
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
 
   const filtered = chats.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
 
@@ -96,7 +108,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {filtered.length === 0 ? (
           <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-            {chats.length === 0 ? "No chats yet." : "No matches."}
+            {chats.length === 0 ? "No active chats." : "No matches."}
           </p>
         ) : (
           <ul className="space-y-0.5">
@@ -163,6 +175,23 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
         )}
       </div>
 
+      {/* Recycle Bin Button */}
+      <div className="px-2 py-1.5 border-t border-sidebar-border">
+        <button
+          onClick={() => setShowRecycleBin(true)}
+          className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        >
+          <span className="flex items-center gap-2">
+            <Archive className="h-3.5 w-3.5" /> Recycle Bin (30 days)
+          </span>
+          {recycledChats.length > 0 && (
+            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+              {recycledChats.length}
+            </Badge>
+          )}
+        </button>
+      </div>
+
       {/* Quick Language & Country Context Badge */}
       <div className="px-3 py-2 border-t border-sidebar-border bg-sidebar-accent/30 text-xs text-muted-foreground flex items-center justify-between">
         <Link to="/settings" className="flex items-center gap-1.5 hover:text-foreground">
@@ -204,12 +233,13 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
         </DropdownMenu>
       </div>
 
+      {/* Move to Recycle Bin Confirmation */}
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this chat?</AlertDialogTitle>
+            <AlertDialogTitle>Move chat to Recycle Bin?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove the conversation and all of its messages.
+              This chat will be moved to the Recycle Bin and retained for 30 days before automatic deletion. You can restore it anytime within 30 days.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -219,15 +249,76 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
                 if (!pendingDelete) return;
                 const id = pendingDelete;
                 setPendingDelete(null);
-                await deleteChat.mutateAsync(id);
+                await softDeleteChat.mutateAsync(id);
+                toast.success("Moved to Recycle Bin (30-day retention)");
                 if (params.chatId === id) navigate({ to: "/chat" });
               }}
             >
-              Delete
+              Move to Recycle Bin
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Recycle Bin Dialog */}
+      <Dialog open={showRecycleBin} onOpenChange={setShowRecycleBin}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5 text-primary" /> Recycle Bin
+            </DialogTitle>
+            <DialogDescription>
+              Deleted chats are kept here for 30 days. You can restore them or delete them permanently.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-80 overflow-y-auto space-y-2 py-2">
+            {recycledChats.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Recycle Bin is empty.
+              </p>
+            ) : (
+              recycledChats.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between rounded-lg border border-border bg-card p-3 shadow-sm"
+                >
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="truncate font-medium text-sm">{c.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {c.daysLeft} {c.daysLeft === 1 ? "day" : "days"} remaining
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await restoreChat.mutateAsync(c.id);
+                        toast.success("Chat restored successfully");
+                      }}
+                      className="h-8 gap-1 text-xs"
+                    >
+                      <RefreshCw className="h-3 w-3" /> Restore
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={async () => {
+                        await permanentDeleteChat.mutateAsync(c.id);
+                        toast.success("Permanently deleted");
+                      }}
+                      className="h-8 gap-1 text-xs"
+                    >
+                      <Trash2 className="h-3 w-3" /> Delete Forever
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowUp, Square, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowUp, Square, RefreshCw, Sparkles, Paperclip, X, Image as ImageIcon, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMessages } from "@/hooks/useChats";
 import { useProfile } from "@/hooks/useProfile";
@@ -13,6 +13,15 @@ interface Props {
   chatId: string;
 }
 
+export type Attachment = {
+  id: string;
+  name: string;
+  type: "image" | "file";
+  mimeType: string;
+  data: string;
+  previewUrl?: string;
+};
+
 export function ChatWindow({ chatId }: Props) {
   const { data: profile } = useProfile();
   const { data: messages = [] } = useMessages(chatId);
@@ -20,18 +29,72 @@ export function ChatWindow({ chatId }: Props) {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [assistantDraft, setAssistantDraft] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, assistantDraft]);
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`File ${file.name} is too large (max 10MB)`);
+        continue;
+      }
+
+      const isImage = file.type.startsWith("image/");
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        const newAttachment: Attachment = {
+          id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: file.name,
+          type: isImage ? "image" : "file",
+          mimeType: file.type || "application/octet-stream",
+          data: result,
+          previewUrl: isImage ? result : undefined,
+        };
+        setAttachments((prev) => [...prev, newAttachment]);
+      };
+
+      if (isImage) {
+        reader.readAsDataURL(file);
+      } else {
+        // Read text/code/document files as text
+        reader.readAsText(file);
+      }
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
   const send = async (content: string) => {
-    if (!content.trim() || streaming) return;
+    if ((!content.trim() && attachments.length === 0) || streaming) return;
+    const currentAttachments = [...attachments];
     setInput("");
+    setAttachments([]);
     setStreaming(true);
     setAssistantDraft("");
+
+    // Build message text with file metadata if present
+    let fullContent = content.trim();
+    if (currentAttachments.length > 0) {
+      const fileSummaries = currentAttachments
+        .map((a) => (a.type === "image" ? `![${a.name}]` : `\n\n--- Attachment: ${a.name} ---\n${a.data.slice(0, 3000)}\n--- End Attachment ---`))
+        .join("\n");
+      fullContent = fullContent ? `${fullContent}\n${fileSummaries}` : fileSummaries;
+    }
 
     // Optimistic user message
     qc.setQueryData(["messages", chatId], (old: any) => [
@@ -40,7 +103,7 @@ export function ChatWindow({ chatId }: Props) {
         id: `optimistic-${Date.now()}`,
         chat_id: chatId,
         role: "user",
-        content,
+        content: fullContent,
         created_at: new Date().toISOString(),
       },
     ]);
@@ -62,12 +125,18 @@ export function ChatWindow({ chatId }: Props) {
         },
         body: JSON.stringify({
           chatId,
-          content,
+          content: fullContent,
           model: profile?.settings.model,
           temperature: profile?.settings.temperature,
           maxTokens: profile?.settings.max_tokens,
           language: profile?.settings.language,
           country: profile?.settings.country,
+          attachments: currentAttachments.map((a) => ({
+            name: a.name,
+            type: a.type,
+            mimeType: a.mimeType,
+            data: a.data,
+          })),
         }),
       });
 
@@ -103,12 +172,10 @@ export function ChatWindow({ chatId }: Props) {
   const regenerate = async () => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser) return;
-    // Delete last assistant if present
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
     if (lastAssistant && lastAssistant.created_at > lastUser.created_at) {
       await supabase.from("messages").delete().eq("id", lastAssistant.id);
     }
-    // Also delete the user message so send() re-inserts it
     await supabase.from("messages").delete().eq("id", lastUser.id);
     await qc.invalidateQueries({ queryKey: ["messages", chatId] });
     send(lastUser.content);
@@ -133,7 +200,7 @@ export function ChatWindow({ chatId }: Props) {
             </div>
             <h2 className="text-2xl font-semibold tracking-tight">How can I help you today?</h2>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Ask anything. I can explain concepts, write code, brainstorm, summarize, and more.
+              Ask questions, upload images for analysis, attach code or documents, brainstorm, and more.
             </p>
           </div>
         ) : (
@@ -155,15 +222,63 @@ export function ChatWindow({ chatId }: Props) {
               </Button>
             </div>
           )}
+
+          {/* Attachment Previews */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 p-2 bg-card rounded-xl border border-border">
+              {attachments.map((att) => (
+                <div key={att.id} className="relative group flex items-center gap-2 rounded-lg border bg-background p-1.5 pr-6 text-xs shadow-sm">
+                  {att.type === "image" && att.previewUrl ? (
+                    <img src={att.previewUrl} alt={att.name} className="h-10 w-10 object-cover rounded-md" />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0 max-w-[120px]">
+                    <p className="truncate font-medium">{att.name}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">{att.type}</p>
+                  </div>
+                  <button
+                    onClick={() => removeAttachment(att.id)}
+                    className="absolute right-1 top-1 rounded-full p-0.5 hover:bg-muted text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              multiple
+              accept="image/*,.txt,.md,.json,.csv,.js,.ts,.tsx,.py,.pdf"
+              className="hidden"
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-foreground"
+              title="Attach image or file"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
+
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Message Smart Chatbot AI…"
+              placeholder="Message Smart Chatbot AI… (Attach images or files)"
               rows={1}
               className="max-h-52 min-h-[40px] flex-1 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0"
             />
+
             {streaming ? (
               <Button size="icon" variant="destructive" onClick={stop} className="h-9 w-9 shrink-0 rounded-xl">
                 <Square className="h-4 w-4" />
@@ -172,7 +287,7 @@ export function ChatWindow({ chatId }: Props) {
               <Button
                 size="icon"
                 onClick={() => send(input)}
-                disabled={!input.trim()}
+                disabled={!input.trim() && attachments.length === 0}
                 className="h-9 w-9 shrink-0 rounded-xl"
               >
                 <ArrowUp className="h-4 w-4" />
