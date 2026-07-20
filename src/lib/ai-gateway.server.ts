@@ -1,10 +1,29 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import fs from "fs";
+import path from "path";
+
+function getEnvVar(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith(`${name}=`)) {
+          return trimmed.slice(name.length + 1).trim();
+        }
+      }
+    }
+  } catch {}
+  return undefined;
+}
 
 export function getAiProvider() {
-  const lovableApiKey = process.env.LOVABLE_API_KEY || process.env.VITE_LOVABLE_API_KEY;
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  const openAiApiKey = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
-  const groqApiKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
+  const lovableApiKey = getEnvVar("LOVABLE_API_KEY") || getEnvVar("VITE_LOVABLE_API_KEY");
+  const geminiApiKey = getEnvVar("GEMINI_API_KEY") || getEnvVar("VITE_GEMINI_API_KEY");
+  const openAiApiKey = getEnvVar("OPENAI_API_KEY") || getEnvVar("VITE_OPENAI_API_KEY");
+  const groqApiKey = getEnvVar("GROQ_API_KEY") || getEnvVar("VITE_GROQ_API_KEY");
 
   if (lovableApiKey) {
     return createOpenAICompatible({

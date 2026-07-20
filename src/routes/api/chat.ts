@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { streamText } from "ai";
 import type { Database } from "@/integrations/supabase/types";
 import { getAiProvider } from "@/lib/ai-gateway.server";
+import fs from "fs";
+import path from "path";
 
 type Body = {
   chatId: string;
@@ -16,12 +18,29 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const SYSTEM_PROMPT =
   "You are Smart Chatbot AI, a helpful, concise, and friendly assistant. Format answers with Markdown. Use fenced code blocks with language hints for code.";
 
+function getEnvVar(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith(`${name}=`)) {
+          return trimmed.slice(name.length + 1).trim();
+        }
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
 export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+        const supabaseUrl = getEnvVar("SUPABASE_URL") || getEnvVar("VITE_SUPABASE_URL");
+        const supabaseKey = getEnvVar("SUPABASE_PUBLISHABLE_KEY") || getEnvVar("VITE_SUPABASE_PUBLISHABLE_KEY");
 
         if (!supabaseUrl || !supabaseKey) {
           return new Response("Supabase not configured in .env file (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY missing)", {
@@ -89,9 +108,8 @@ export const Route = createFileRoute("/api/chat")({
 
         let modelName = body.model || DEFAULT_MODEL;
 
-        const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+        const geminiApiKey = getEnvVar("GEMINI_API_KEY") || getEnvVar("VITE_GEMINI_API_KEY");
         if (geminiApiKey) {
-          // Map to standard supported Gemini model name for Google AI Studio
           modelName = "gemini-2.5-flash";
         }
 
@@ -125,7 +143,9 @@ export const Route = createFileRoute("/api/chat")({
               controller.close();
             } catch (err) {
               const message = err instanceof Error ? err.message : "Model error";
-              controller.enqueue(encoder.encode(`\n\n[Error: ${message}]`));
+              console.error("[Chat API Error]:", message);
+              assistantText = `[Error generating response: ${message}]`;
+              controller.enqueue(encoder.encode(assistantText));
               controller.close();
             } finally {
               if (assistantText.trim()) {
