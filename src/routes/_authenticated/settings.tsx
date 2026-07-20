@@ -1,7 +1,7 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, MapPin } from "lucide-react";
+import { ArrowLeft, Globe, MapPin, Check, MessageSquare } from "lucide-react";
 import { AppShell } from "@/components/chat/AppShell";
 import { useProfile, useUpdateProfile, type ChatSettings } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,7 @@ export const Route = createFileRoute("/_authenticated/settings")({
 });
 
 function SettingsPage() {
+  const navigate = useNavigate();
   const { data: profile } = useProfile();
   const update = useUpdateProfile();
   const [settings, setSettings] = useState<ChatSettings | null>(null);
@@ -81,10 +82,14 @@ function SettingsPage() {
 
   if (!settings) return null;
 
-  const save = async () => {
+  const saveSettings = async (newSettings: ChatSettings, navigateBack = false) => {
+    setSettings(newSettings);
     try {
-      await update.mutateAsync({ settings });
+      await update.mutateAsync({ settings: newSettings });
       toast.success("Settings saved successfully");
+      if (navigateBack) {
+        navigate({ to: "/chat" });
+      }
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -92,12 +97,24 @@ function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        <Button asChild variant="ghost" size="sm" className="mb-4 gap-1.5">
-          <Link to="/chat">
-            <ArrowLeft className="h-4 w-4" /> Back to chat
-          </Link>
-        </Button>
+      <div className="mx-auto max-w-2xl px-6 py-8 pb-24">
+        <div className="mb-6 flex items-center justify-between">
+          <Button asChild variant="ghost" size="sm" className="gap-1.5">
+            <Link to="/chat">
+              <ArrowLeft className="h-4 w-4" /> Back to chat
+            </Link>
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={() => saveSettings(settings, true)}
+            disabled={update.isPending}
+            className="gap-2 font-medium"
+          >
+            <Check className="h-4 w-4" /> Save & Start Chatting
+          </Button>
+        </div>
+
         <h1 className="mb-6 text-2xl font-semibold tracking-tight">Settings</h1>
 
         <Card className="mb-4">
@@ -111,14 +128,17 @@ function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label className="flex items-center gap-2">
+              <Label className="flex items-center gap-2 font-medium">
                 <Globe className="h-4 w-4" /> Response Language (12 Working Languages)
               </Label>
               <Select
                 value={settings.language || "en"}
-                onValueChange={(language) => setSettings({ ...settings, language })}
+                onValueChange={(language) => {
+                  const updated = { ...settings, language };
+                  saveSettings(updated);
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -133,14 +153,17 @@ function SettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="flex items-center gap-2">
+              <Label className="flex items-center gap-2 font-medium">
                 <MapPin className="h-4 w-4" /> Country / Region Context
               </Label>
               <Select
                 value={settings.country || "US"}
-                onValueChange={(country) => setSettings({ ...settings, country })}
+                onValueChange={(country) => {
+                  const updated = { ...settings, country };
+                  saveSettings(updated);
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -166,7 +189,10 @@ function SettingsPage() {
             <Switch
               id="theme"
               checked={settings.theme === "dark"}
-              onCheckedChange={(v) => setSettings({ ...settings, theme: v ? "dark" : "light" })}
+              onCheckedChange={(v) => {
+                const updated = { ...settings, theme: (v ? "dark" : "light") as "dark" | "light" };
+                saveSettings(updated);
+              }}
             />
           </CardContent>
         </Card>
@@ -179,7 +205,13 @@ function SettingsPage() {
           <CardContent className="space-y-6">
             <div className="space-y-2">
               <Label>AI model</Label>
-              <Select value={settings.model} onValueChange={(model) => setSettings({ ...settings, model })}>
+              <Select
+                value={settings.model}
+                onValueChange={(model) => {
+                  const updated = { ...settings, model };
+                  saveSettings(updated);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -204,6 +236,10 @@ function SettingsPage() {
                 max={2}
                 step={0.05}
                 onValueChange={([v]) => setSettings({ ...settings, temperature: v })}
+                onValueCommit={([v]) => {
+                  const updated = { ...settings, temperature: v };
+                  saveSettings(updated);
+                }}
               />
               <p className="text-xs text-muted-foreground">
                 Lower = more focused. Higher = more creative.
@@ -221,14 +257,24 @@ function SettingsPage() {
                 max={8192}
                 step={128}
                 onValueChange={([v]) => setSettings({ ...settings, max_tokens: v })}
+                onValueCommit={([v]) => {
+                  const updated = { ...settings, max_tokens: v };
+                  saveSettings(updated);
+                }}
               />
             </div>
           </CardContent>
         </Card>
 
-        <div className="mt-6 flex justify-end">
-          <Button onClick={save} disabled={update.isPending}>
-            {update.isPending ? "Saving…" : "Save changes"}
+        {/* Sticky Action Footer */}
+        <div className="sticky bottom-4 mt-8 flex items-center justify-between rounded-xl border border-border bg-card/90 p-4 shadow-lg backdrop-blur">
+          <span className="text-xs text-muted-foreground">Changes save automatically on selection</span>
+          <Button
+            onClick={() => saveSettings(settings, true)}
+            disabled={update.isPending}
+            className="gap-2 font-medium"
+          >
+            <MessageSquare className="h-4 w-4" /> Save & Return to Chat
           </Button>
         </div>
       </div>
