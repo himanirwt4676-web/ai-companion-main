@@ -12,7 +12,7 @@ type Body = {
   maxTokens?: number;
 };
 
-const DEFAULT_MODEL = "gemini-1.5-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const SYSTEM_PROMPT =
   "You are Smart Chatbot AI, a helpful, concise, and friendly assistant. Format answers with Markdown. Use fenced code blocks with language hints for code.";
 
@@ -91,12 +91,8 @@ export const Route = createFileRoute("/api/chat")({
 
         const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
         if (geminiApiKey) {
-          if (modelName.startsWith("google/")) {
-            modelName = modelName.replace("google/", "");
-          }
-          if (modelName.includes("gemini-3") || modelName.includes("gemini-2.5") || modelName === "gemini-3-flash-preview") {
-            modelName = "gemini-1.5-flash";
-          }
+          // Map to standard supported Gemini model name for Google AI Studio
+          modelName = "gemini-2.5-flash";
         }
 
         const model = provider(modelName);
