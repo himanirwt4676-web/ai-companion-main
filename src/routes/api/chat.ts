@@ -127,25 +127,33 @@ export const Route = createFileRoute("/api/chat")({
 
         if (!chat) return new Response("Chat not found", { status: 404 });
 
-        // Process PDF attachments dynamically with pdf-parse
+        // Process PDF attachments page-by-page using unpdf
         let extractedPdfText = "";
         for (const att of body.attachments || []) {
           if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
             try {
-              const pdfParse = require("pdf-parse");
+              const { extractText, getDocumentProxy } = await import("unpdf");
               const base64Str = att.data.includes(";base64,") ? att.data.split(";base64,")[1] : att.data;
               const buffer = Buffer.from(base64Str, "base64");
-              const parsed = await pdfParse(buffer);
-              if (parsed?.text && parsed.text.trim()) {
-                extractedPdfText += `\n\n--- Document Attachment (${att.name}) ---\n${parsed.text.trim()}\n--- End Document Attachment ---`;
+              const uint8 = new Uint8Array(buffer);
+              const pdfProxy = await getDocumentProxy(uint8);
+              const { text } = await extractText(pdfProxy, { mergePages: false });
+
+              if (Array.isArray(text) && text.length > 0) {
+                const pagesFormatted = text
+                  .map((pageText, idx) => `--- Page ${idx + 1} ---\n${pageText.trim()}`)
+                  .join("\n\n");
+                extractedPdfText += `\n\n=== Attached PDF Document: ${att.name} (${text.length} Pages) ===\n${pagesFormatted}\n=== End Attached Document ===`;
+              } else if (typeof text === "string" && (text as string).trim()) {
+                extractedPdfText += `\n\n=== Attached PDF Document: ${att.name} ===\n${(text as string).trim()}\n=== End Attached Document ===`;
               }
             } catch (pdfErr) {
-              console.error("[PDF Parse Error]:", pdfErr);
+              console.error("[unpdf Extraction Error]:", pdfErr);
             }
           }
         }
 
-        // Combine prompt text
+        // Combine prompt text cleanly
         const combinedUserText = (body.content + extractedPdfText).trim();
 
         // Insert user message
@@ -231,7 +239,7 @@ export const Route = createFileRoute("/api/chat")({
         const userCountryCode = body.country || "US";
         const userCountryName = COUNTRY_NAMES[userCountryCode] || userCountryCode;
 
-        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with multimodal image and PDF document analysis capabilities.
+        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with advanced PDF and document analysis capabilities.
 
 REAL-TIME CONTEXT DATA:
 - Current Date: ${formattedDate} (${now.toISOString().split("T")[0]})
@@ -241,7 +249,7 @@ REAL-TIME CONTEXT DATA:
 - Preferred Language: ${userLangName} (${userLangCode})
 
 MANDATORY INSTRUCTIONS:
-1. DOCUMENT & PDF ANALYSIS: You have full access to extracted PDF texts, documents, screenshots, and images attached by the user. Thoroughly read and analyze any attached PDFs or documents, summarize them, or answer any questions about them accurately.
+1. FULL PDF & DOCUMENT ANALYSIS: Attached PDF documents have been converted into clean, page-by-page text blocks labeled with '--- Page 1 ---', '--- Page 2 ---', etc. Read and study all pages carefully. When asked about a specific page (e.g. "explain page 1" or "explain page 2"), answer thoroughly based on that page's text content.
 2. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
 3. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
 4. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;
