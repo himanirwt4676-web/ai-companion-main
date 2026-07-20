@@ -127,7 +127,7 @@ export const Route = createFileRoute("/api/chat")({
 
         if (!chat) return new Response("Chat not found", { status: 404 });
 
-        // Process PDF attachments page-by-page using unpdf
+        // Process PDF attachments page-by-page using unpdf (for text extraction & page structuring)
         let extractedPdfText = "";
         for (const att of body.attachments || []) {
           if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
@@ -142,10 +142,13 @@ export const Route = createFileRoute("/api/chat")({
               if (Array.isArray(text) && text.length > 0) {
                 const pagesFormatted = text
                   .map((pageText, idx) => `--- Page ${idx + 1} ---\n${pageText.trim()}`)
+                  .filter((p) => p.length > 18)
                   .join("\n\n");
-                extractedPdfText += `\n\n=== Attached PDF Document: ${att.name} (${text.length} Pages) ===\n${pagesFormatted}\n=== End Attached Document ===`;
+                if (pagesFormatted.trim()) {
+                  extractedPdfText += `\n\n=== Extracted PDF Text (${att.name} - ${text.length} Pages) ===\n${pagesFormatted}\n=== End Extracted PDF Text ===`;
+                }
               } else if (typeof text === "string" && (text as string).trim()) {
-                extractedPdfText += `\n\n=== Attached PDF Document: ${att.name} ===\n${(text as string).trim()}\n=== End Attached Document ===`;
+                extractedPdfText += `\n\n=== Extracted PDF Text (${att.name}) ===\n${(text as string).trim()}\n=== End Extracted PDF Text ===`;
               }
             } catch (pdfErr) {
               console.error("[unpdf Extraction Error]:", pdfErr);
@@ -153,7 +156,7 @@ export const Route = createFileRoute("/api/chat")({
           }
         }
 
-        // Combine prompt text cleanly
+        // Combine prompt text cleanly for DB storage and history
         const combinedUserText = (body.content + extractedPdfText).trim();
 
         // Insert user message
@@ -197,25 +200,40 @@ export const Route = createFileRoute("/api/chat")({
             content: m.content,
           }));
 
-        // Format the latest user message with multimodal content parts for Gemini Vision / files
-        const imageAttachments = (body.attachments || []).filter((a) => a.type === "image" && a.data);
+        // Build multimodal content parts for Gemini 2.5 Flash (Images + Direct PDF Inline Data + Text)
+        const contentParts: any[] = [
+          { type: "text", text: combinedUserText || "Please analyze the attached document(s) / image(s)." },
+        ];
 
-        let latestUserContent: any = combinedUserText;
-        if (imageAttachments.length > 0) {
-          latestUserContent = [
-            { type: "text", text: combinedUserText || "Please analyze the attached image(s)." },
-            ...imageAttachments.map((img) => ({
+        for (const att of body.attachments || []) {
+          if (att.type === "image" && att.data) {
+            contentParts.push({
               type: "image",
-              image: img.data,
-            })),
-          ];
+              image: att.data,
+            });
+          } else if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
+            // Send inline PDF data part to Gemini Vision / Document Intelligence engine
+            try {
+              contentParts.push({
+                type: "file",
+                data: att.data,
+                mimeType: "application/pdf",
+              });
+            } catch (fileErr) {
+              // Fallback to image type if file part unsupported
+              contentParts.push({
+                type: "image",
+                image: att.data,
+              });
+            }
+          }
         }
 
         const messages = [
           ...historyMessages,
           {
             role: "user" as const,
-            content: latestUserContent,
+            content: contentParts.length === 1 ? combinedUserText : contentParts,
           },
         ];
 
@@ -239,7 +257,7 @@ export const Route = createFileRoute("/api/chat")({
         const userCountryCode = body.country || "US";
         const userCountryName = COUNTRY_NAMES[userCountryCode] || userCountryCode;
 
-        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with advanced PDF and document analysis capabilities.
+        const systemPrompt = `You are Smart Chatbot AI, a highly intelligent, universal AI assistant with advanced Multimodal Vision and Document Intelligence capabilities.
 
 REAL-TIME CONTEXT DATA:
 - Current Date: ${formattedDate} (${now.toISOString().split("T")[0]})
@@ -249,10 +267,11 @@ REAL-TIME CONTEXT DATA:
 - Preferred Language: ${userLangName} (${userLangCode})
 
 MANDATORY INSTRUCTIONS:
-1. FULL PDF & DOCUMENT ANALYSIS: Attached PDF documents have been converted into clean, page-by-page text blocks labeled with '--- Page 1 ---', '--- Page 2 ---', etc. Read and study all pages carefully. When asked about a specific page (e.g. "explain page 1" or "explain page 2"), answer thoroughly based on that page's text content.
-2. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
-3. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
-4. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;
+1. UNIVERSAL PDF & IMAGE ANALYSIS: You can study, read, and explain ANY PDF (text-based PDFs, scanned PDFs, hand-written documents, forms, research papers, contracts, invoices) and ANY Image (diagrams, screenshots, photos, charts). Analyze the document/image thoroughly and answer any questions asked by the user.
+2. PAGE-BY-PAGE ACCURACY: When a multi-page PDF is attached, text is provided with page markers ('--- Page 1 ---', '--- Page 2 ---', etc.) alongside inline PDF document data. When the user asks about specific pages (e.g. "explain page 1", "what is on page 2", "summarize page 3"), answer accurately for that specific page.
+3. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Give exact answers for date/time/location queries.
+4. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
+5. FORMATTING: Use clean, beautiful Markdown formatting, bold headings, bullet points, and syntax-highlighted code blocks.`;
 
         const result = streamText({
           model,
