@@ -5,7 +5,6 @@ import type { Database } from "@/integrations/supabase/types";
 import { getAiProvider } from "@/lib/ai-gateway.server";
 import fs from "fs";
 import path from "path";
-import pdfParse from "pdf-parse";
 
 type AttachmentInput = {
   name: string;
@@ -128,15 +127,16 @@ export const Route = createFileRoute("/api/chat")({
 
         if (!chat) return new Response("Chat not found", { status: 404 });
 
-        // Process PDF attachments and extract text
+        // Process PDF attachments dynamically with pdf-parse
         let extractedPdfText = "";
         for (const att of body.attachments || []) {
           if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
             try {
+              const pdfParse = require("pdf-parse");
               const base64Str = att.data.includes(";base64,") ? att.data.split(";base64,")[1] : att.data;
               const buffer = Buffer.from(base64Str, "base64");
               const parsed = await pdfParse(buffer);
-              if (parsed.text && parsed.text.trim()) {
+              if (parsed?.text && parsed.text.trim()) {
                 extractedPdfText += `\n\n--- Document Attachment (${att.name}) ---\n${parsed.text.trim()}\n--- End Document Attachment ---`;
               }
             } catch (pdfErr) {
