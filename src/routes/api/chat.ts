@@ -5,6 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { getAiProvider } from "@/lib/ai-gateway.server";
 import fs from "fs";
 import path from "path";
+import pdfParse from "pdf-parse";
 
 type AttachmentInput = {
   name: string;
@@ -127,17 +128,37 @@ export const Route = createFileRoute("/api/chat")({
 
         if (!chat) return new Response("Chat not found", { status: 404 });
 
+        // Process PDF attachments and extract text
+        let extractedPdfText = "";
+        for (const att of body.attachments || []) {
+          if (att.name.toLowerCase().endsWith(".pdf") || att.mimeType.includes("pdf")) {
+            try {
+              const base64Str = att.data.includes(";base64,") ? att.data.split(";base64,")[1] : att.data;
+              const buffer = Buffer.from(base64Str, "base64");
+              const parsed = await pdfParse(buffer);
+              if (parsed.text && parsed.text.trim()) {
+                extractedPdfText += `\n\n--- Document Attachment (${att.name}) ---\n${parsed.text.trim()}\n--- End Document Attachment ---`;
+              }
+            } catch (pdfErr) {
+              console.error("[PDF Parse Error]:", pdfErr);
+            }
+          }
+        }
+
+        // Combine prompt text
+        const combinedUserText = (body.content + extractedPdfText).trim();
+
         // Insert user message
         await supabase.from("messages").insert({
           chat_id: body.chatId,
           user_id: userId,
           role: "user",
-          content: body.content,
+          content: combinedUserText,
         });
 
         // If chat title still default, set from first user message
         if (chat.title === "New chat") {
-          const title = (body.content || "Attached files").trim().slice(0, 60);
+          const title = (body.content || "Attached document").trim().slice(0, 60);
           await supabase.from("chats").update({ title }).eq("id", body.chatId);
         } else {
           await supabase.from("chats").update({ updated_at: new Date().toISOString() }).eq("id", body.chatId);
@@ -161,7 +182,7 @@ export const Route = createFileRoute("/api/chat")({
 
         // Build history messages
         const historyMessages = (history ?? [])
-          .slice(0, -1) // Exclude the newly inserted last message so we can format it with attachments below
+          .slice(0, -1)
           .filter((m) => m.role === "user" || m.role === "assistant")
           .map((m) => ({
             role: m.role as "user" | "assistant",
@@ -171,10 +192,10 @@ export const Route = createFileRoute("/api/chat")({
         // Format the latest user message with multimodal content parts for Gemini Vision / files
         const imageAttachments = (body.attachments || []).filter((a) => a.type === "image" && a.data);
 
-        let latestUserContent: any = body.content || "";
+        let latestUserContent: any = combinedUserText;
         if (imageAttachments.length > 0) {
           latestUserContent = [
-            { type: "text", text: body.content || "Please analyze the attached image(s)." },
+            { type: "text", text: combinedUserText || "Please analyze the attached image(s)." },
             ...imageAttachments.map((img) => ({
               type: "image",
               image: img.data,
@@ -210,7 +231,7 @@ export const Route = createFileRoute("/api/chat")({
         const userCountryCode = body.country || "US";
         const userCountryName = COUNTRY_NAMES[userCountryCode] || userCountryCode;
 
-        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with multimodal image and document analysis capabilities.
+        const systemPrompt = `You are Smart Chatbot AI, a helpful, highly intelligent, and friendly AI companion with multimodal image and PDF document analysis capabilities.
 
 REAL-TIME CONTEXT DATA:
 - Current Date: ${formattedDate} (${now.toISOString().split("T")[0]})
@@ -220,7 +241,7 @@ REAL-TIME CONTEXT DATA:
 - Preferred Language: ${userLangName} (${userLangCode})
 
 MANDATORY INSTRUCTIONS:
-1. MULTIMODAL VISION & FILE ANALYSIS: You can analyze attached images, screenshots, code snippets, and text documents thoroughly. When an image or document is attached, analyze it carefully and answer the user's questions about it.
+1. DOCUMENT & PDF ANALYSIS: You have full access to extracted PDF texts, documents, screenshots, and images attached by the user. Thoroughly read and analyze any attached PDFs or documents, summarize them, or answer any questions about them accurately.
 2. REAL-TIME ACCURACY: You have direct awareness of the exact current date, time, and timezone listed above. Whenever the user asks for the time, date, day of the week, or time-sensitive location details, give exact and accurate answers using this real-time context.
 3. MULTILINGUAL RESPONSES: All your answers MUST be written in ${userLangName} unless the user explicitly requests another language.
 4. FORMATTING: Use clean, beautiful Markdown formatting and fenced code blocks with syntax highlighting for code snippets.`;

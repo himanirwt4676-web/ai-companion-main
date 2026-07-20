@@ -160,6 +160,21 @@ export function usePermanentDeleteChat() {
   });
 }
 
+// Delete individual message
+export function useDeleteMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ messageId, chatId }: { messageId: string; chatId: string }) => {
+      const { error } = await supabase.from("messages").delete().eq("id", messageId);
+      if (error) throw error;
+      return { chatId };
+    },
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["messages", vars.chatId] });
+    },
+  });
+}
+
 export function useRenameChat() {
   const qc = useQueryClient();
   return useMutation({

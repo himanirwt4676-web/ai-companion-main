@@ -206,7 +206,7 @@ export function ChatWindow({ chatId }: Props) {
         ) : (
           <div className="pb-32">
             {messages.map((m) => (
-              <MessageBubble key={m.id} role={m.role} content={m.content} />
+              <MessageBubble key={m.id} id={m.id} chatId={chatId} role={m.role} content={m.content} />
             ))}
             {streaming && <MessageBubble role="assistant" content={assistantDraft} streaming />}
           </div>
